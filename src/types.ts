@@ -1,5 +1,6 @@
 export type CueKind = 'dialogue' | 'sfx' | 'transition'
 export type Rate = 0.8 | 0.9 | 1 | 1.1 | 1.2
+export type RecordStatus = 'unrecorded' | 'recorded' | 'rerecord'
 
 export interface Character {
   id: string
@@ -26,6 +27,7 @@ export interface Cue {
   soundEffectId?: string
   transition: string
   manualDuration?: number
+  recordStatus?: RecordStatus
 }
 
 export interface Scene {

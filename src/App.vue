@@ -16,8 +16,8 @@ import {
   NTabs,
   NTag
 } from 'naive-ui'
-import { useStudio } from './useStudio'
-import type { Cue, CueKind, Rate } from './types'
+import { useStudio, RECORD_STATUS_LABELS } from './useStudio'
+import type { Cue, CueKind, Rate, RecordStatus } from './types'
 
 const studio = useStudio()
 const {
@@ -30,6 +30,9 @@ const {
   saveState,
   durationOfCue,
   durationOfScene,
+  recordStatusOf,
+  sceneRecordProgress,
+  setCueRecordStatus,
   updateProject,
   updateScene,
   updateCue,
@@ -66,6 +69,11 @@ const rateOptions: Array<{ label: string; value: Rate }> = [
   { label: '偏快 1.1×', value: 1.1 },
   { label: '快 1.2×', value: 1.2 }
 ]
+const recordStatusOptions: Array<{ label: string; value: RecordStatus }> = [
+  { label: '未录', value: 'unrecorded' },
+  { label: '已录', value: 'recorded' },
+  { label: '待重录', value: 'rerecord' }
+]
 const characterOptions = computed(() => state.value.document.characters.map((item) => ({ label: `${item.name} / ${item.voiceActor}`, value: item.id })))
 const effectOptions = computed(() => state.value.document.soundEffects.map((item) => ({ label: `${item.name} (${item.duration}s)`, value: item.id })))
 const themeOverrides = {
@@ -99,6 +107,22 @@ function cueName(cue: Cue) {
 
 function sceneStatus(sceneId: string) {
   return warnings.value.some((warning) => warning.sceneId === sceneId) ? 'warning' : 'ok'
+}
+
+function recordTagType(cue: Cue) {
+  const status = recordStatusOf(cue)
+  return status === 'recorded' ? 'success' : status === 'rerecord' ? 'warning' : 'default'
+}
+
+function sceneRecordLabel(sceneId: string) {
+  const scene = state.value.document.scenes.find((item) => item.id === sceneId)
+  if (!scene) return ''
+  const progress = sceneRecordProgress(scene)
+  if (progress.total === 0) return ''
+  if (progress.remaining === 0) return `${progress.total} 条全部已录`
+  const parts = [`还剩 ${progress.remaining} 条`]
+  if (progress.rerecord > 0) parts.push(`待重录 ${progress.rerecord}`)
+  return parts.join(' · ')
 }
 
 function dropCue(targetId: string) {
@@ -238,6 +262,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <span class="scene-copy">
                 <strong>{{ scene.code }} · {{ scene.title }}</strong>
                 <small>{{ scene.location }} / {{ scene.timeOfDay }}</small>
+                <small
+                  v-if="sceneRecordLabel(scene.id)"
+                  class="scene-record"
+                  :class="{ done: sceneRecordProgress(scene).remaining === 0 }"
+                >{{ sceneRecordLabel(scene.id) }}</small>
               </span>
               <span class="scene-duration">{{ durationOfScene(scene).toFixed(0) }}s</span>
             </button>
@@ -302,6 +331,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   <span class="cue-number">{{ String(index + 1).padStart(2, '0') }}</span>
                   <n-select class="kind-select" size="small" :value="cue.kind" :options="kindOptions" @update:value="changeCueKind(cue, $event)" />
                   <n-tag size="small" :bordered="false">{{ cueName(cue) }}</n-tag>
+                  <template v-if="cue.kind === 'dialogue'">
+                    <n-tag size="small" :type="recordTagType(cue)" :bordered="false">录音：{{ RECORD_STATUS_LABELS[recordStatusOf(cue)] }}</n-tag>
+                    <n-select
+                      class="record-select"
+                      size="small"
+                      :value="recordStatusOf(cue)"
+                      :options="recordStatusOptions"
+                      aria-label="录音状态"
+                      @update:value="setCueRecordStatus(cue.id, $event)"
+                    />
+                  </template>
                   <span class="duration-pill">{{ durationOfCue(cue).toFixed(1) }}s</span>
                   <n-button size="tiny" tertiary type="error" @click="deleteCue(cue.id)">删除</n-button>
                 </div>

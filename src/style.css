@@ -52,6 +52,8 @@ h3 { margin: 3px 0 0; font-size: 21px; }
 .scene-copy strong { font-size: 13px; }
 .scene-copy small { margin-top: 5px; color: #68768e; font-size: 11px; }
 .scene-duration { color: #73daca; font: 700 11px monospace; }
+.scene-record { color: #f2b36d !important; font: 600 10px/1.4 monospace; letter-spacing: .03em; }
+.scene-record.done { color: #73daca !important; }
 .sidebar-tip { margin: 24px 5px 14px; padding: 14px; display: grid; gap: 7px; border: 1px solid #253044; border-radius: 9px; color: #67758c; background: #111827; font-size: 11px; }
 .sidebar-tip strong { color: #9ba8bd; }
 .scene-title-row { align-items: flex-start; margin-bottom: 22px; }
@@ -74,6 +76,7 @@ h3 { margin: 3px 0 0; font-size: 21px; }
 .cue-topline { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; }
 .cue-number { color: #66738a; font: 700 11px monospace; }
 .kind-select { width: 92px; }
+.record-select { width: 92px; flex: none; }
 .duration-pill { margin-left: auto; padding: 3px 8px; color: #8492a9; border-radius: 99px; background: #0e1420; font: 700 11px monospace; }
 .cue-grid { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); gap: 8px; }
 .review-column :deep(.n-tabs-nav) { margin-bottom: 12px; }

@@ -1,10 +1,20 @@
 import { computed, ref, watch } from 'vue'
 import { sampleDocument } from './sample'
-import type { Cue, CueKind, FrozenVersion, PendingChange, Scene, StudioDocument, StudioState, WarningItem } from './types'
+import type { Cue, CueKind, FrozenVersion, PendingChange, RecordStatus, Scene, StudioDocument, StudioState, WarningItem } from './types'
 
 const STORAGE_KEY = 'sologsb-1016-studio-v1'
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+
+export const RECORD_STATUS_LABELS: Record<RecordStatus, string> = {
+  unrecorded: '未录',
+  recorded: '已录',
+  rerecord: '待重录'
+}
+
+// 台词内容、配音角色、语速变化会让已录的条目退回待重录；
+// 情绪提示、排序、其他字段改动不影响录音状态。
+const RECORD_INVALIDATING_FIELDS: ReadonlyArray<keyof Cue> = ['text', 'characterId', 'rate']
 
 function loadState(): StudioState {
   try {
@@ -48,6 +58,21 @@ export function useStudio() {
 
   function durationOfScene(scene: Scene): number {
     return Number(scene.cues.reduce((total, cue) => total + durationOfCue(cue), 0).toFixed(1))
+  }
+
+  function recordStatusOf(cue: Cue): RecordStatus {
+    return cue.recordStatus ?? 'unrecorded'
+  }
+
+  function sceneRecordProgress(scene: Scene) {
+    const progress = { total: 0, recorded: 0, rerecord: 0, unrecorded: 0, remaining: 0 }
+    for (const cue of scene.cues) {
+      if (cue.kind !== 'dialogue') continue
+      progress.total += 1
+      progress[recordStatusOf(cue)] += 1
+    }
+    progress.remaining = progress.total - progress.recorded
+    return progress
   }
 
   const totalDuration = computed(() => state.value.document.scenes.reduce((total, scene) => total + durationOfScene(scene), 0))
@@ -173,13 +198,28 @@ export function useStudio() {
       for (const scene of document.scenes) {
         const cue = scene.cues.find((item) => item.id === cueId)
         if (!cue) continue
+        const invalidates = RECORD_INVALIDATING_FIELDS.includes(field)
+        const beforeValue = invalidates ? String(cue[field as 'text' | 'characterId' | 'rate'] ?? '') : ''
         if (field === 'rate') cue.rate = Number(value) as Cue['rate']
         else if (field === 'manualDuration') cue.manualDuration = value === '' || value === undefined ? undefined : Number(value)
         else if (field === 'kind') cue.kind = value as CueKind
         else cue[field] = (value ?? '') as never
+        if (invalidates && cue.kind === 'dialogue' && cue.recordStatus === 'recorded' && String(cue[field as 'text' | 'characterId' | 'rate'] ?? '') !== beforeValue) {
+          cue.recordStatus = 'rerecord'
+        }
         break
       }
     })
+  }
+
+  function setCueRecordStatus(cueId: string, status: RecordStatus) {
+    for (const scene of state.value.document.scenes) {
+      const cue = scene.cues.find((item) => item.id === cueId)
+      if (!cue) continue
+      cue.recordStatus = status
+      break
+    }
+    persist()
   }
 
   function addScene() {
@@ -223,7 +263,8 @@ export function useStudio() {
         rate: 1,
         soundEffectId: kind === 'sfx' ? document.soundEffects[0]?.id : undefined,
         transition: kind === 'transition' ? '淡出' : '',
-        manualDuration: kind === 'transition' ? 3 : undefined
+        manualDuration: kind === 'transition' ? 3 : undefined,
+        recordStatus: kind === 'dialogue' ? 'unrecorded' : undefined
       })
     })
     selectedCueId.value = id
@@ -320,16 +361,20 @@ export function useStudio() {
       ''
     ]
     document.scenes.forEach((scene, sceneIndex) => {
+      const progress = sceneRecordProgress(scene)
       lines.push(`${scene.code}｜${scene.title}`)
       lines.push(`场景：${scene.location} / ${scene.timeOfDay}`)
       lines.push(`转场：${scene.transition}`)
       lines.push(`场次限额：${scene.durationLimit} 秒｜预计：${durationOfScene(scene)} 秒`)
+      if (progress.total > 0) {
+        lines.push(`录音进度：已录 ${progress.recorded} / ${progress.total} 条｜还剩 ${progress.remaining} 条（未录 ${progress.unrecorded}、待重录 ${progress.rerecord}）`)
+      }
       lines.push('-'.repeat(34))
       scene.cues.forEach((cue, cueIndex) => {
         const prefix = `${String(cueIndex + 1).padStart(2, '0')} [${durationOfCue(cue).toFixed(1)}s]`
         if (cue.kind === 'dialogue') {
           const role = document.characters.find((character) => character.id === cue.characterId)?.name ?? '未指定角色'
-          lines.push(`${prefix} ${role}｜${cue.emotion || '自然'}｜语速 ${cue.rate}`)
+          lines.push(`${prefix}〔${RECORD_STATUS_LABELS[recordStatusOf(cue)]}〕${role}｜${cue.emotion || '自然'}｜语速 ${cue.rate}`)
           lines.push(`    ${cue.text}`)
         } else if (cue.kind === 'sfx') {
           const effect = document.soundEffects.find((item) => item.id === cue.soundEffectId)
@@ -362,7 +407,13 @@ export function useStudio() {
     selectedSceneId.value = state.value.document.scenes[0]?.id ?? ''
   }
 
-  watch(state, persist, { deep: true })
+  // updatedAt is stamped inside persist itself, so it must not be part of the
+  // watched source — otherwise every save would retrigger the watcher forever.
+  watch(
+    () => ({ document: state.value.document, pending: state.value.pending, frozen: state.value.frozen }),
+    () => persist(),
+    { deep: true }
+  )
 
   return {
     state,
@@ -375,6 +426,9 @@ export function useStudio() {
     saveState,
     durationOfCue,
     durationOfScene,
+    recordStatusOf,
+    sceneRecordProgress,
+    setCueRecordStatus,
     updateProject,
     updateScene,
     updateCue,
