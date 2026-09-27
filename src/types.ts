@@ -1,5 +1,12 @@
 export type CueKind = 'dialogue' | 'sfx' | 'transition'
 export type Rate = 0.8 | 0.9 | 1 | 1.1 | 1.2
+export type RecordStatus = 'unrecorded' | 'recorded' | 'redo'
+
+export const RECORD_STATUS_LABEL: Record<RecordStatus, string> = {
+  unrecorded: '未录',
+  recorded: '已录',
+  redo: '待重录'
+}
 
 export interface Character {
   id: string
@@ -26,6 +33,7 @@ export interface Cue {
   soundEffectId?: string
   transition: string
   manualDuration?: number
+  recordStatus: RecordStatus
 }
 
 export interface Scene {

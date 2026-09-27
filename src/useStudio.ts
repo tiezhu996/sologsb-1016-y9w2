@@ -1,17 +1,73 @@
 import { computed, ref, watch } from 'vue'
 import { sampleDocument } from './sample'
-import type { Cue, CueKind, FrozenVersion, PendingChange, Scene, StudioDocument, StudioState, WarningItem } from './types'
+import type { Cue, CueKind, FrozenVersion, PendingChange, RecordStatus, Scene, StudioDocument, StudioState, WarningItem } from './types'
+import { RECORD_STATUS_LABEL } from './types'
 
 const STORAGE_KEY = 'sologsb-1016-studio-v1'
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+
+// 改这些字段会让已录的声音作废：台词改文本、配音角色或语速；音效改素材或动作说明；转场改方式或说明。
+// 情绪提示、手动时长不在此列，拖动排序也不触碰这些字段，所以已录状态会保留。
+const RECORD_SENSITIVE_FIELDS: Record<CueKind, Array<keyof Cue>> = {
+  dialogue: ['text', 'characterId', 'rate'],
+  sfx: ['text', 'soundEffectId'],
+  transition: ['text', 'transition']
+}
+
+export interface RecordStats {
+  total: number
+  unrecorded: number
+  recorded: number
+  redo: number
+}
+
+function cueRecordStatus(cue: Cue): RecordStatus {
+  return cue.recordStatus === 'recorded' || cue.recordStatus === 'redo' ? cue.recordStatus : 'unrecorded'
+}
+
+// 旧版本本地数据没有录音状态字段，补成“未录”。
+function withRecordStatuses(document: StudioDocument): StudioDocument {
+  for (const scene of document.scenes) {
+    for (const cue of scene.cues) cue.recordStatus = cueRecordStatus(cue)
+  }
+  return document
+}
+
+// 对比修改前后的两份文档：已录条目只要动到录音敏感字段就退回“待重录”；
+// 条目类型切换（台词改成音效等）使原录音作废，回到“未录”。
+// 改情绪提示、手动时长、拖动排序或改别的条目时，状态原样保留。
+function applyRecordingFallbacks(previous: StudioDocument, next: StudioDocument) {
+  const previousCues = new Map<string, Cue>()
+  for (const scene of previous.scenes) for (const cue of scene.cues) previousCues.set(cue.id, cue)
+  for (const scene of next.scenes) {
+    for (const cue of scene.cues) {
+      const old = previousCues.get(cue.id)
+      if (!old) {
+        cue.recordStatus = 'unrecorded'
+        continue
+      }
+      if (old.kind !== cue.kind) {
+        cue.recordStatus = 'unrecorded'
+        continue
+      }
+      if (cueRecordStatus(old) === 'recorded') {
+        const changed = RECORD_SENSITIVE_FIELDS[cue.kind].some((field) => old[field] !== cue[field])
+        if (changed) cue.recordStatus = 'redo'
+      }
+    }
+  }
+}
 
 function loadState(): StudioState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as StudioState
-      if (parsed.document?.scenes?.length) return parsed
+      if (parsed.document?.scenes?.length) {
+        withRecordStatuses(parsed.document)
+        return parsed
+      }
     }
   } catch {
     // A corrupt local draft should not prevent access to the built-in example.
@@ -29,8 +85,12 @@ export function useStudio() {
   const selectedSceneId = ref(state.value.document.scenes[0]?.id ?? '')
   const selectedCueId = ref('')
   const saveState = ref<'saved' | 'saving' | 'dirty'>('saved')
-  const undoStack = ref<StudioDocument[]>([])
-  const redoStack = ref<StudioDocument[]>([])
+  interface HistoryEntry {
+    document: StudioDocument
+    silent: boolean
+  }
+  const undoStack = ref<HistoryEntry[]>([])
+  const redoStack = ref<HistoryEntry[]>([])
   let saveTimer: number | undefined
 
   const selectedScene = computed(() => state.value.document.scenes.find((scene) => scene.id === selectedSceneId.value) ?? state.value.document.scenes[0])
@@ -52,6 +112,30 @@ export function useStudio() {
 
   const totalDuration = computed(() => state.value.document.scenes.reduce((total, scene) => total + durationOfScene(scene), 0))
   const pendingChanges = computed(() => state.value.pending.filter((item) => item.status === 'pending'))
+
+  function recordStatsOfScene(scene: Scene): RecordStats {
+    const stats: RecordStats = { total: scene.cues.length, unrecorded: 0, recorded: 0, redo: 0 }
+    for (const cue of scene.cues) stats[cueRecordStatus(cue)] += 1
+    return stats
+  }
+
+  const recordStats = computed<RecordStats>(() => {
+    const stats: RecordStats = { total: 0, unrecorded: 0, recorded: 0, redo: 0 }
+    for (const scene of state.value.document.scenes) {
+      const sceneStats = recordStatsOfScene(scene)
+      stats.total += sceneStats.total
+      stats.unrecorded += sceneStats.unrecorded
+      stats.recorded += sceneStats.recorded
+      stats.redo += sceneStats.redo
+    }
+    return stats
+  })
+
+  // 这场还剩几条要进棚：未录与待重录都算没录完。
+  const remainingCountOfScene = (scene: Scene) => {
+    const stats = recordStatsOfScene(scene)
+    return stats.unrecorded + stats.redo
+  }
 
   const warnings = computed<WarningItem[]>(() => {
     const result: WarningItem[] = []
@@ -120,7 +204,8 @@ export function useStudio() {
     const before = clone(state.value.document)
     const document = clone(state.value.document)
     mutator(document)
-    undoStack.value.push(before)
+    applyRecordingFallbacks(state.value.document, document)
+    undoStack.value.push({ document: before, silent: false })
     if (undoStack.value.length > 60) undoStack.value.shift()
     redoStack.value = []
     state.value.document = document
@@ -137,18 +222,34 @@ export function useStudio() {
     persist()
   }
 
-  function replaceDocument(next: StudioDocument, label: string) {
+  // 录音状态是录音台操作而非剧本修改：进撤销栈但不进导演待确认区。
+  function applyStatus(label: string, mutator: (document: StudioDocument) => void) {
+    const before = clone(state.value.document)
+    const document = clone(state.value.document)
+    mutator(document)
+    undoStack.value.push({ document: before, silent: true })
+    if (undoStack.value.length > 60) undoStack.value.shift()
+    redoStack.value = []
+    state.value.document = document
+    state.value.updatedAt = new Date().toISOString()
+    void label
+    persist()
+  }
+
+  function replaceDocument(next: StudioDocument, label: string, silent = false) {
     const before = clone(state.value.document)
     state.value.document = clone(next)
-    state.value.pending.unshift({
-      id: uid('change'),
-      label,
-      note: '',
-      createdAt: new Date().toISOString(),
-      status: 'pending',
-      before,
-      after: clone(next)
-    })
+    if (!silent) {
+      state.value.pending.unshift({
+        id: uid('change'),
+        label,
+        note: '',
+        createdAt: new Date().toISOString(),
+        status: 'pending',
+        before,
+        after: clone(next)
+      })
+    }
     persist()
   }
 
@@ -223,7 +324,8 @@ export function useStudio() {
         rate: 1,
         soundEffectId: kind === 'sfx' ? document.soundEffects[0]?.id : undefined,
         transition: kind === 'transition' ? '淡出' : '',
-        manualDuration: kind === 'transition' ? 3 : undefined
+        manualDuration: kind === 'transition' ? 3 : undefined,
+        recordStatus: 'unrecorded'
       })
     })
     selectedCueId.value = id
@@ -232,6 +334,19 @@ export function useStudio() {
   function deleteCue(cueId: string) {
     commit('删除提示项', (document) => {
       for (const scene of document.scenes) scene.cues = scene.cues.filter((cue) => cue.id !== cueId)
+    })
+  }
+
+  // 录音师在制作稿上直接标记每条的进棚状态，不经过导演待确认区。
+  function setCueRecordStatus(cueId: string, status: RecordStatus) {
+    applyStatus(`标记录音状态为${RECORD_STATUS_LABEL[status]}`, (document) => {
+      for (const scene of document.scenes) {
+        const cue = scene.cues.find((item) => item.id === cueId)
+        if (cue) {
+          cue.recordStatus = status
+          break
+        }
+      }
     })
   }
 
@@ -269,7 +384,7 @@ export function useStudio() {
     const index = state.value.pending.findIndex((item) => item.id === changeId && item.status === 'pending')
     if (index < 0) return
     const change = state.value.pending[index]
-    undoStack.value.push(clone(state.value.document))
+    undoStack.value.push({ document: clone(state.value.document), silent: false })
     state.value.document = clone(change.before)
     for (let i = 0; i <= index; i += 1) {
       if (state.value.pending[i].status === 'pending') state.value.pending[i].status = 'rejected'
@@ -287,15 +402,16 @@ export function useStudio() {
   function undo() {
     const previous = undoStack.value.pop()
     if (!previous) return
-    redoStack.value.push(clone(state.value.document))
-    replaceDocument(previous, '撤销上一步修改')
+    redoStack.value.push({ document: clone(state.value.document), silent: previous.silent })
+    // 录音状态随文档快照一起回到原样；silent 操作（录音标记）不进导演待确认区。
+    replaceDocument(previous.document, '撤销上一步修改', previous.silent)
   }
 
   function redo() {
     const next = redoStack.value.pop()
     if (!next) return
-    undoStack.value.push(clone(state.value.document))
-    replaceDocument(next, '重做修改')
+    undoStack.value.push({ document: clone(state.value.document), silent: next.silent })
+    replaceDocument(next.document, '重做修改', next.silent)
   }
 
   function freeze(name: string): FrozenVersion {
@@ -324,9 +440,16 @@ export function useStudio() {
       lines.push(`场景：${scene.location} / ${scene.timeOfDay}`)
       lines.push(`转场：${scene.transition}`)
       lines.push(`场次限额：${scene.durationLimit} 秒｜预计：${durationOfScene(scene)} 秒`)
+      const stats = recordStatsOfScene(scene)
+      const remaining = stats.unrecorded + stats.redo
+      const tail = remaining === 0
+        ? '录音进度：本场全部录完'
+        : `录音进度：还剩 ${remaining} 条未录（未录 ${stats.unrecorded} / 待重录 ${stats.redo}）`
+      lines.push(tail)
       lines.push('-'.repeat(34))
       scene.cues.forEach((cue, cueIndex) => {
-        const prefix = `${String(cueIndex + 1).padStart(2, '0')} [${durationOfCue(cue).toFixed(1)}s]`
+        const statusLabel = RECORD_STATUS_LABEL[cueRecordStatus(cue)]
+        const prefix = `${String(cueIndex + 1).padStart(2, '0')} [${durationOfCue(cue).toFixed(1)}s][${statusLabel}]`
         if (cue.kind === 'dialogue') {
           const role = document.characters.find((character) => character.id === cue.characterId)?.name ?? '未指定角色'
           lines.push(`${prefix} ${role}｜${cue.emotion || '自然'}｜语速 ${cue.rate}`)
@@ -375,9 +498,13 @@ export function useStudio() {
     saveState,
     durationOfCue,
     durationOfScene,
+    recordStats,
+    recordStatsOfScene,
+    remainingCountOfScene,
     updateProject,
     updateScene,
     updateCue,
+    setCueRecordStatus,
     addScene,
     deleteScene,
     addCue,

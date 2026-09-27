@@ -17,7 +17,7 @@ import {
   NTag
 } from 'naive-ui'
 import { useStudio } from './useStudio'
-import type { Cue, CueKind, Rate } from './types'
+import type { Cue, CueKind, Rate, RecordStatus, Scene } from './types'
 
 const studio = useStudio()
 const {
@@ -30,9 +30,12 @@ const {
   saveState,
   durationOfCue,
   durationOfScene,
+  recordStats,
+  recordStatsOfScene,
   updateProject,
   updateScene,
   updateCue,
+  setCueRecordStatus,
   addScene,
   deleteScene,
   addCue,
@@ -65,6 +68,11 @@ const rateOptions: Array<{ label: string; value: Rate }> = [
   { label: '标准 1.0×', value: 1 },
   { label: '偏快 1.1×', value: 1.1 },
   { label: '快 1.2×', value: 1.2 }
+]
+const recordStatusOptions: Array<{ label: string; value: RecordStatus }> = [
+  { label: '未录', value: 'unrecorded' },
+  { label: '已录', value: 'recorded' },
+  { label: '待重录', value: 'redo' }
 ]
 const characterOptions = computed(() => state.value.document.characters.map((item) => ({ label: `${item.name} / ${item.voiceActor}`, value: item.id })))
 const effectOptions = computed(() => state.value.document.soundEffects.map((item) => ({ label: `${item.name} (${item.duration}s)`, value: item.id })))
@@ -99,6 +107,25 @@ function cueName(cue: Cue) {
 
 function sceneStatus(sceneId: string) {
   return warnings.value.some((warning) => warning.sceneId === sceneId) ? 'warning' : 'ok'
+}
+
+function sceneRecordClass(scene: Scene) {
+  const stats = recordStatsOfScene(scene)
+  if (stats.total === 0) return 'empty'
+  if (stats.unrecorded + stats.redo === 0) return 'done'
+  return stats.redo > 0 ? 'redo' : 'open'
+}
+
+function sceneRecordText(scene: Scene) {
+  const stats = recordStatsOfScene(scene)
+  if (stats.total === 0) return '无台词'
+  const remaining = stats.unrecorded + stats.redo
+  return remaining === 0 ? `已录完 ${stats.recorded}/${stats.total}` : `剩 ${remaining} 条`
+}
+
+function sceneRecordTitle(scene: Scene) {
+  const stats = recordStatsOfScene(scene)
+  return `未录 ${stats.unrecorded} 条 · 已录 ${stats.recorded} 条 · 待重录 ${stats.redo} 条`
 }
 
 function dropCue(targetId: string) {
@@ -210,6 +237,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <span>场次</span><strong>{{ state.document.scenes.length }}</strong>
         </div>
         <div class="metric compact">
+          <span>待录</span><strong :class="{ accent: recordStats.unrecorded + recordStats.redo > 0, danger: recordStats.redo > 0 }">{{ recordStats.unrecorded + recordStats.redo }}</strong>
+        </div>
+        <div class="metric compact">
           <span>待确认</span><strong class="accent">{{ pendingCount }}</strong>
         </div>
         <div class="metric compact">
@@ -239,7 +269,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 <strong>{{ scene.code }} · {{ scene.title }}</strong>
                 <small>{{ scene.location }} / {{ scene.timeOfDay }}</small>
               </span>
-              <span class="scene-duration">{{ durationOfScene(scene).toFixed(0) }}s</span>
+              <span class="scene-meta">
+                <span class="scene-duration">{{ durationOfScene(scene).toFixed(0) }}s</span>
+                <span class="scene-record" :class="sceneRecordClass(scene)" :title="sceneRecordTitle(scene)">{{ sceneRecordText(scene) }}</span>
+              </span>
             </button>
           </div>
           <div class="sidebar-tip">
@@ -289,7 +322,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               v-for="(cue, index) in selectedScene.cues"
               :key="cue.id"
               class="cue-card"
-              :class="[`kind-${cue.kind}`, { dragging: dragCueId === cue.id }]"
+              :class="[`kind-${cue.kind}`, `record-${cue.recordStatus ?? 'unrecorded'}`, { dragging: dragCueId === cue.id }]"
               draggable="true"
               @dragstart="dragCueId = cue.id"
               @dragend="dragCueId = ''"
@@ -302,6 +335,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   <span class="cue-number">{{ String(index + 1).padStart(2, '0') }}</span>
                   <n-select class="kind-select" size="small" :value="cue.kind" :options="kindOptions" @update:value="changeCueKind(cue, $event)" />
                   <n-tag size="small" :bordered="false">{{ cueName(cue) }}</n-tag>
+                  <n-select
+                    class="record-select"
+                    size="small"
+                    :class="`record-option-${cue.recordStatus ?? 'unrecorded'}`"
+                    :value="cue.recordStatus ?? 'unrecorded'"
+                    :options="recordStatusOptions"
+                    :aria-label="`第 ${index + 1} 条录音状态`"
+                    @update:value="setCueRecordStatus(cue.id, $event)"
+                  />
                   <span class="duration-pill">{{ durationOfCue(cue).toFixed(1) }}s</span>
                   <n-button size="tiny" tertiary type="error" @click="deleteCue(cue.id)">删除</n-button>
                 </div>

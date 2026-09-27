@@ -21,7 +21,7 @@ button, input, textarea { font: inherit; }
 .project-fields { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1.4fr); gap: 10px; max-width: 740px; }
 .top-actions { display: flex; align-items: center; gap: 6px; }
 .save-state { color: #78859d; font-size: 12px; white-space: nowrap; margin-right: 4px; }
-.summary-strip { min-height: 78px; display: grid; grid-template-columns: 210px minmax(260px, 1fr) repeat(3, 100px); align-items: center; gap: 18px; padding: 12px 24px; border-bottom: 1px solid #202938; background: #0f1420; }
+.summary-strip { min-height: 78px; display: grid; grid-template-columns: 210px minmax(240px, 1fr) repeat(4, 92px); align-items: center; gap: 18px; padding: 12px 24px; border-bottom: 1px solid #202938; background: #0f1420; }
 .metric { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 12px; }
 .metric span { color: #78859d; font-size: 12px; }
 .metric strong { font-size: 25px; color: #eef4ff; }
@@ -52,6 +52,12 @@ h3 { margin: 3px 0 0; font-size: 21px; }
 .scene-copy strong { font-size: 13px; }
 .scene-copy small { margin-top: 5px; color: #68768e; font-size: 11px; }
 .scene-duration { color: #73daca; font: 700 11px monospace; }
+.scene-meta { display: grid; justify-items: end; gap: 4px; }
+.scene-record { padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 700; white-space: nowrap; border: 1px solid transparent; }
+.scene-record.open { color: #8492a9; background: #1a2233; border-color: #2b3445; }
+.scene-record.redo { color: #ffc777; background: rgba(255, 199, 119, .12); border-color: rgba(255, 199, 119, .35); }
+.scene-record.done { color: #73daca; background: rgba(115, 218, 202, .12); border-color: rgba(115, 218, 202, .32); }
+.scene-record.empty { color: #566278; background: transparent; }
 .sidebar-tip { margin: 24px 5px 14px; padding: 14px; display: grid; gap: 7px; border: 1px solid #253044; border-radius: 9px; color: #67758c; background: #111827; font-size: 11px; }
 .sidebar-tip strong { color: #9ba8bd; }
 .scene-title-row { align-items: flex-start; margin-bottom: 22px; }
@@ -68,6 +74,11 @@ h3 { margin: 3px 0 0; font-size: 21px; }
 .cue-card.kind-dialogue { border-left-color: #73daca; }
 .cue-card.kind-sfx { border-left-color: #bb9af7; }
 .cue-card.kind-transition { border-left-color: #ff9e64; }
+.cue-card.record-recorded { background: #122024; border-color: #27483f; }
+.cue-card.record-recorded:hover { border-color: #356056; }
+.cue-card.record-redo { background: #221c12; border-color: #5c4826; }
+.cue-card.record-redo:hover { border-color: #7a5e2f; }
+.record-select { width: 96px; }
 .cue-card.dragging { opacity: .45; transform: scale(.995); }
 .cue-grip { display: grid; place-items: center; color: #526078; background: #111722; cursor: grab; font-size: 10px; writing-mode: vertical-rl; user-select: none; }
 .cue-main { min-width: 0; padding: 12px 14px 14px; }
